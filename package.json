@@ -1,0 +1,16 @@
+{
+  "name": "gitviewer",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "GitViewer - a visual Git client for Windows inspired by Android Studio's Git integration",
+  "scripts": {
+    "start": "node launch.mjs",
+    "server": "node launch.mjs --no-open",
+    "demo": "node scripts/make-demo.mjs",
+    "test": "node --test test/api.test.mjs"
+  },
+  "engines": {
+    "node": ">=20.11"
+  }
+}
