@@ -121,7 +121,7 @@ GitViewer 按这个使用习惯重新实现，并补上了 Diff 视图、Blame�
 | 操作系统 | Windows 10 / 11（启动脚本按 Windows 编写；服务端代码本身跨平台） |
 | Git | Git for Windows 2.28+（已在 2.37 上测试），需要能在命令行执行 `git` |
 | Node.js | 20.11+（已在 Node.js 24 上测试） |
-| 浏览器 | Microsoft Edge 或 Google Chrome（用于打开应用窗口） |
+| 浏览器 | Google Chrome（推荐）或 Microsoft Edge（用于打开应用窗口） |
 
 GitViewer 本身 **没有任何 npm 运行时依赖**，不需要 `npm install`。
 
@@ -142,7 +142,7 @@ node --version
 
 - 不显示命令行窗口
 - 启动本地服务
-- 用 Edge/Chrome 打开一个独立的 GitViewer 应用窗口
+- 用 Chrome/Edge 打开一个独立的 GitViewer 应用窗口（默认优先使用 Chrome）
 
 如果希望有桌面快捷方式，双击 **`创建桌面快捷方式.vbs`**，会在桌面生成带图标的 `GitViewer.lnk`。
 
@@ -258,13 +258,15 @@ GitViewer 可以直接初始化一个**已经有文件、但还没有 `.git` 的
 ```
 data/
   settings.json        # 主题、最近仓库、Diff 模式等
-  browser-profile/     # Edge/Chrome 应用窗口的独立配置目录
+  browser-profile-chrome/  # Chrome 应用窗口的独立配置目录（默认）
+  browser-profile-edge/    # 仅在强制使用 Edge 时创建
   runtime.json         # 当前服务端口、PID、启动参数
   launch.log           # 启动日志（排查“窗口没打开”时看这里）
 ```
 
 - 删除 `data/` 即可恢复默认设置。
 - 浏览器配置目录是隔离的，不会影响你日常使用的 Edge/Chrome 配置。
+- 应用窗口默认优先使用 **Chrome**，避免 Edge 自动登录 Microsoft 账户后弹出“正在同步浏览数据”以及扩展（如 AdGuard）的欢迎页。如果希望强制使用 Edge，可以设置环境变量 `GITVIEWER_BROWSER=edge`；启动参数已禁用同步和扩展，但 Microsoft 账户策略仍可能插入提示。
 - GitViewer 只监听 `127.0.0.1`，不会对局域网暴露端口。
 - 不会上传仓库内容；所有网络请求都由本机 `git` 直接发起。
 
@@ -385,6 +387,18 @@ npm test
 **提示“无法运行 git”？**
 
 安装 Git for Windows，并在安装时选择把 Git 加入 PATH；重启命令行 / 资源管理器后再试。
+
+**打开 GitViewer 时弹出 Edge 的“正在同步浏览数据”或 AdGuard 欢迎页？**
+
+GitViewer 现在默认用 **Chrome** 打开独立应用窗口，并把同步、扩展和首次运行提示关闭，不会再带入你日常 Edge 账户里的扩展和推广页。如果仍然出现：
+
+1. 关闭所有旧的 GitViewer 窗口；
+2. 删除 `data/browser-profile-edge/`（如果有）；
+3. 确认没有设置 `GITVIEWER_BROWSER=edge`。
+
+**桌面快捷方式没有图标？**
+
+重新运行 **`创建桌面快捷方式.vbs`**。它会把图标复制到 `%LOCALAPPDATA%\GitViewer\gitviewer.ico` 再写入快捷方式，避免 Windows 无法从某些磁盘读取图标；随后会刷新资源管理器图标缓存。
 
 **窗口没有打开，但服务启动了？**
 

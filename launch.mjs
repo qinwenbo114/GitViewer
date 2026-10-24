@@ -40,55 +40,76 @@ function pingExisting(port) {
 }
 
 function findBrowser() {
-  const candidates = [];
   const pf = process.env['ProgramFiles'] || 'C:\\Program Files';
   const pf86 = process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)';
   const local = process.env.LOCALAPPDATA || '';
-  candidates.push(path.join(pf86, 'Microsoft', 'Edge', 'Application', 'msedge.exe'));
-  candidates.push(path.join(pf, 'Microsoft', 'Edge', 'Application', 'msedge.exe'));
-  candidates.push(path.join(pf, 'Google', 'Chrome', 'Application', 'chrome.exe'));
-  candidates.push(path.join(pf86, 'Google', 'Chrome', 'Application', 'chrome.exe'));
-  candidates.push(path.join(local, 'Google', 'Chrome', 'Application', 'chrome.exe'));
-  candidates.push(path.join(local, 'Microsoft', 'Edge', 'Application', 'msedge.exe'));
-  for (const candidate of candidates) {
-    try {
-      if (fs.existsSync(candidate)) return candidate;
-    } catch {
-      /* ignore */
+  const chrome = [
+    path.join(pf, 'Google', 'Chrome', 'Application', 'chrome.exe'),
+    path.join(pf86, 'Google', 'Chrome', 'Application', 'chrome.exe'),
+    path.join(local, 'Google', 'Chrome', 'Application', 'chrome.exe'),
+  ];
+  const edge = [
+    path.join(pf86, 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
+    path.join(pf, 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
+    path.join(local, 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
+  ];
+  const preference = String(process.env.GITVIEWER_BROWSER || '').toLowerCase();
+  const groups = preference === 'edge'
+    ? [{ family: 'edge', paths: edge }, { family: 'chrome', paths: chrome }]
+    : [{ family: 'chrome', paths: chrome }, { family: 'edge', paths: edge }];
+  for (const group of groups) {
+    for (const candidate of group.paths) {
+      try {
+        if (fs.existsSync(candidate)) {
+          return { path: candidate, family: group.family };
+        }
+      } catch {
+        /* ignore */
+      }
     }
   }
   return null;
 }
 
-function openAppWindow(url, profileDir) {
+function openAppWindow(url) {
   const browser = findBrowser();
   const args = [
     `--app=${url}`,
-    `--user-data-dir=${profileDir}`,
     '--no-first-run',
     '--no-default-browser-check',
+    '--disable-sync',
+    '--disable-extensions',
+    '--disable-component-extensions-with-background-pages',
+    '--no-service-autorun',
     '--disable-session-crashed-bubble',
     '--hide-crash-restore-bubble',
     '--window-size=1500,950',
     '--window-position=80,50',
   ];
   if (browser) {
+    // Chrome gets a clean dedicated profile. Edge has Microsoft-account sync
+    // and extension promos that are suppressed as far as Chromium flags allow.
+    const profileDir = path.join(DATA_DIR, `browser-profile-${browser.family}`);
+    if (browser.family === 'edge') {
+      args.push('--disable-features=msEdgeSyncPromo,msEdgeSigninPromo,msEdgeWelcomePage,msEdgeFirstRunExperience,EdgeSyncPromo,msEdgeIdentityFRE');
+    }
+    args.push(`--user-data-dir=${profileDir}`);
     try {
       fs.mkdirSync(profileDir, { recursive: true });
     } catch {
       /* ignore */
     }
-    const child = spawn(browser, args, {
+    const child = spawn(browser.path, args, {
       stdio: 'ignore',
       detached: true,
       windowsHide: false,
     });
     child.on('error', (err) => log(`browser launch failed: ${err.message}`));
     child.unref();
-    log(`opened ${path.basename(browser)} app window -> ${url}`);
+    log(`opened ${browser.family} app window -> ${url}`);
     return true;
   }
-  log('no Edge/Chrome found, falling back to the default browser');
+  log('no Chrome/Edge found, falling back to the default browser');
   try {
     const child = spawn(process.platform === 'win32' ? 'cmd' : 'xdg-open',
       process.platform === 'win32' ? ['/c', 'start', '', url] : [url], {
@@ -99,6 +120,48 @@ function openAppWindow(url, profileDir) {
     return false;
   } catch {
     return false;
+  }
+}
+
+let iconHelper = null;
+
+/**
+ * Chromium app windows derive their taskbar icon from a small favicon, which
+ * looks soft on high-DPI screens. A tiny PowerShell helper applies our
+ * high-resolution HICON to the window and keeps it applied while it is open.
+ */
+function startIconHelper(port) {
+  if (process.platform !== 'win32') return;
+  const script = path.join(APP_ROOT, 'scripts', 'set-window-icon.ps1');
+  const iconPath = path.join(APP_ROOT, 'public', 'favicon.ico');
+  if (!fs.existsSync(script) || !fs.existsSync(iconPath)) return;
+  const powershell = path.join(
+    process.env.SystemRoot || 'C:\\Windows',
+    'System32',
+    'WindowsPowerShell',
+    'v1.0',
+    'powershell.exe',
+  );
+  if (!fs.existsSync(powershell)) return;
+  try {
+    iconHelper = spawn(powershell, [
+      '-NoProfile',
+      '-WindowStyle', 'Hidden',
+      '-ExecutionPolicy', 'Bypass',
+      '-File', script,
+      '-Port', String(port),
+      '-IconPath', iconPath,
+      '-LogPath', path.join(DATA_DIR, 'icon-helper.log'),
+    ], {
+      stdio: 'ignore',
+      windowsHide: true,
+      detached: false,
+    });
+    iconHelper.on('error', (err) => log(`icon helper failed: ${err.message}`));
+    iconHelper.unref();
+    log('started taskbar icon helper');
+  } catch (err) {
+    log(`icon helper failed: ${err.message}`);
   }
 }
 
@@ -115,7 +178,8 @@ async function main() {
     const existing = await pingExisting(DEFAULT_PORT);
     if (existing) {
       log(`GitViewer is already running on port ${DEFAULT_PORT} (pid ${existing.pid})`);
-      openAppWindow(`http://${HOST}:${DEFAULT_PORT}/`, path.join(DATA_DIR, 'browser-profile'));
+      openAppWindow(`http://${HOST}:${DEFAULT_PORT}/`);
+      await new Promise((resolve) => setTimeout(resolve, 400));
       process.exit(0);
     }
   }
@@ -125,6 +189,11 @@ async function main() {
     if (shuttingDown) return;
     shuttingDown = true;
     log('shutting down');
+    try {
+      iconHelper?.kill();
+    } catch {
+      /* ignore */
+    }
     try {
       await instance.close();
     } catch {
@@ -154,7 +223,8 @@ async function main() {
   }
 
   if (!noOpen) {
-    openAppWindow(url, path.join(DATA_DIR, 'browser-profile'));
+    openAppWindow(url);
+    startIconHelper(instance.port);
   } else {
     console.log(`GitViewer: ${url}`);
   }
