@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { git, gitOk, cleanGitError } from './git.mjs';
@@ -845,7 +846,13 @@ export async function getConflict(dir, opts) {
       const buf = fs.readFileSync(full);
       working = isProbablyBinary(buf)
         ? { binary: true, content: '', size: buf.length }
-        : { binary: false, content: decodeText(buf), size: buf.length };
+        : {
+          binary: false,
+          content: decodeText(buf),
+          size: buf.length,
+          // 保存时用来做并发校验：编辑器里的内容基于哪一版文件。
+          hash: createHash('sha256').update(buf).digest('hex'),
+        };
     }
   } catch {
     working = null;

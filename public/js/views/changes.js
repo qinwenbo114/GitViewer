@@ -2,7 +2,7 @@ import {
   h, emptyState, loadingState, contextMenu, copyText, toast, button,
 } from '../dom.js';
 import { icon } from '../icons.js';
-import { fmtRelative } from '../format.js';
+import { fmtRelative, absPath } from '../format.js';
 import { statusBadge, filePathEl, diffStatsEl, avatarEl } from '../components/filelist.js';
 import { renderDiff } from '../components/diff.js';
 import { renderConflictView } from '../components/conflict.js';
@@ -153,7 +153,7 @@ function changeFileMenu(ctx, file, event) {
     { separator: true },
     { label: '添加到 .gitignore', icon: 'eye', onClick: () => ctx.ignorePath(file.path), disabled: file.group === 'staged' },
     { label: '在资源管理器中显示', icon: 'folderOpen', onClick: () => ctx.revealPath(file.path) },
-    { label: '复制文件路径', icon: 'copy', onClick: async () => { await copyText(file.path); toast('已复制路径', 'success'); } },
+    { label: '复制文件路径', icon: 'copy', onClick: async () => { await copyText(absPath(ctx.state.repo.path, file.path)); toast('已复制完整路径', 'success'); } },
   );
   contextMenu(event, items);
 }
@@ -454,10 +454,15 @@ export function renderChangesView(ctx) {
       diffPane.append(emptyState({ iconName: 'alert', title: '无法读取差异', description: state.changes.diffError, compact: true }));
     } else if (file.group === 'conflicted' && state.changes.conflict) {
       diffPane.append(renderConflictView(state.changes.conflict, state.changes.conflictMode, {
+        editor: state.changes.editor && state.changes.editor.path === file.path ? state.changes.editor : null,
         onModeChange: (mode) => {
           state.changes.conflictMode = mode;
           ctx.render();
         },
+        onBeginEdit: () => ctx.openConflictEditor(),
+        onDraft: (text) => ctx.setConflictDraft(text),
+        onSave: () => ctx.saveConflictDraft(),
+        onCancel: () => ctx.cancelConflictEditor(),
       }));
     } else {
       const mode = state.changes.diffMode || state.settings.diffMode;

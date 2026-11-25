@@ -66,6 +66,15 @@ export function splitPath(p) {
   return { dir: p.slice(0, idx + 1), name: p.slice(idx + 1) };
 }
 
+/** 仓库内相对路径 → 绝对路径（复制到剪贴板、交给外部程序时用）。 */
+export function absPath(repoPath, rel) {
+  const root = String(repoPath || '').replace(/[\\/]+$/, '');
+  const sep = root.includes('\\') ? '\\' : '/';
+  const tail = String(rel || '').replace(/^[\\/]+/, '').split(/[\\/]/).filter(Boolean).join(sep);
+  if (!tail) return root;
+  return `${root}${sep}${tail}`;
+}
+
 export function escapeHtml(text) {
   return String(text)
     .replace(/&/g, '&amp;')

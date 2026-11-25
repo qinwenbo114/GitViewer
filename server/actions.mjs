@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { git, gitOk, cleanGitError } from './git.mjs';
@@ -7,6 +8,7 @@ import {
   assertRefLike,
   assertShaLike,
   badRequest,
+  isProbablyBinary,
   normalizeRepoPath,
   safeRepoPath,
 } from './util.mjs';
@@ -354,6 +356,83 @@ export async function markResolved(params) {
   return { resolved: paths.length };
 }
 
+function sha256Hex(buf) {
+  return createHash('sha256').update(buf).digest('hex');
+}
+
+/** 找出文本里残留的冲突标记（行号从 1 开始）。 */
+export function scanConflictMarkers(text) {
+  const lines = String(text || '').replace(/\r\n/g, '\n').split('\n');
+  const hits = [];
+  lines.forEach((line, index) => {
+    if (/^<{7}/.test(line)) hits.push({ line: index + 1, kind: 'ours' });
+    else if (/^\|{7}/.test(line)) hits.push({ line: index + 1, kind: 'base' });
+    else if (/^={7}/.test(line)) hits.push({ line: index + 1, kind: 'theirs' });
+    else if (/^>{7}/.test(line)) hits.push({ line: index + 1, kind: 'end' });
+  });
+  return hits;
+}
+
+/**
+ * 保存冲突文件的工作区内容。
+ * 只允许写“当前未解决冲突”的文件；写前用 hash 做并发校验；保留原 BOM 与换行风格；
+ * 内容里没有残留标记时顺带 git add，等于一步完成“保存 + 标记为已解决”。
+ */
+export async function writeWorkingFile(params) {
+  const repo = await repoOf(params.repo);
+  const p = safeRepoPath(params.path);
+  if (typeof params.content !== 'string') throw badRequest('缺少文件内容');
+  if (Buffer.byteLength(params.content, 'utf8') > 8 * 1024 * 1024) {
+    throw badRequest('文件过大，无法在应用内保存');
+  }
+
+  const unmerged = await git(['ls-files', '-u', '--', p], { cwd: repo.path, timeout: 30_000 });
+  if (unmerged.code !== 0) {
+    throw new AppError(cleanGitError(unmerged.stderr) || '无法读取冲突状态', { stderr: unmerged.stderr });
+  }
+  if (!unmerged.stdout.trim()) throw badRequest('该文件当前没有未解决的冲突');
+
+  const full = path.join(repo.path, ...p.split('/'));
+  let stat;
+  try {
+    stat = fs.statSync(full);
+  } catch {
+    throw badRequest('文件不存在');
+  }
+  if (!stat.isFile()) throw badRequest('不是普通文件');
+  if (stat.size > 8 * 1024 * 1024) throw badRequest('文件过大，无法在应用内保存');
+
+  const original = fs.readFileSync(full);
+  if (isProbablyBinary(original)) throw badRequest('二进制文件不支持在线编辑');
+  const hash = sha256Hex(original);
+  if (params.expectedHash && params.expectedHash !== hash) {
+    throw new AppError('文件已在编辑器外被修改，请刷新后重试', { status: 409 });
+  }
+
+  const hadBom = original.length >= 3 && original[0] === 0xef && original[1] === 0xbb && original[2] === 0xbf;
+  const text = original.toString('utf8');
+  const crlfCount = (text.match(/\r\n/g) || []).length;
+  const lfCount = (text.match(/\n/g) || []).length - crlfCount;
+  const useCrlf = crlfCount > lfCount;
+
+  const normalized = String(params.content).replace(/^\uFEFF/, '').replace(/\r\n/g, '\n');
+  const body = useCrlf ? normalized.replace(/\n/g, '\r\n') : normalized;
+  fs.writeFileSync(full, (hadBom ? '\uFEFF' : '') + body, 'utf8');
+
+  const markers = scanConflictMarkers(normalized);
+  let resolved = false;
+  if (!markers.length) {
+    await gitOk(['add', '--', p], { cwd: repo.path });
+    resolved = true;
+  }
+  return {
+    path: p,
+    markers,
+    resolved,
+    hash: sha256Hex(fs.readFileSync(full)),
+  };
+}
+
 export async function createTag(params) {
   const repo = await repoOf(params.repo);
   const name = await checkTagName(repo, params.name);
@@ -695,9 +774,9 @@ function nativePath(relOrAbs, repoPath) {
   return path.join(repoPath, ...safeRepoPath(relOrAbs).split('/'));
 }
 
-function launchShell(target, extraArgs = []) {
-  const args = process.platform === 'win32' ? [target, ...extraArgs] : [target, ...extraArgs];
-  const child = spawn(process.platform === 'win32' ? 'explorer.exe' : process.platform === 'darwin' ? 'open' : 'xdg-open', args, {
+/** 以「已分离」的方式启动外部程序：不阻塞、不弹黑框、失败也不报错。 */
+function spawnDetached(exe, args) {
+  const child = spawn(exe, args, {
     stdio: 'ignore',
     detached: true,
     windowsHide: false,
@@ -710,10 +789,17 @@ export function openInFileManager(params) {
   const repo = normalizeRepoPath(params.repo);
   const target = params.path ? nativePath(params.path, repo) : repo;
   if (!fs.existsSync(target)) throw badRequest('路径不存在');
-  if (params.select) {
-    launchShell(`/select,${target}`);
+  const isDir = fs.statSync(target).isDirectory();
+  if (process.platform === 'win32') {
+    // explorer.exe 用的是它自己的命令行解析器，`/select` 与路径必须作为两个独立参数
+    // （路径含空格时交给 Node 单独加引号）。拼成 `/select,D:\a b\file` 时整串会被
+    // 引号包住，explorer 可能在空格处截断，结果打开一个毫不相干的目录。
+    spawnDetached('explorer.exe', params.select ? ['/select,', target] : [target]);
+  } else if (process.platform === 'darwin') {
+    spawnDetached('open', params.select ? ['-R', target] : [target]);
   } else {
-    launchShell(target);
+    // Linux 的 xdg-open 没有“定位到文件”，退化为打开所在目录。
+    spawnDetached('xdg-open', [params.select && !isDir ? path.dirname(target) : target]);
   }
   return { target };
 }
@@ -722,7 +808,7 @@ export function openWithDefaultApp(params) {
   const repo = normalizeRepoPath(params.repo);
   const target = nativePath(params.path, repo);
   if (!fs.existsSync(target)) throw badRequest('文件不存在');
-  launchShell(target);
+  spawnDetached(process.platform === 'win32' ? 'explorer.exe' : process.platform === 'darwin' ? 'open' : 'xdg-open', [target]);
   return { target };
 }
 

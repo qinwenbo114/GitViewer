@@ -1,6 +1,6 @@
 import { h, emptyState, loadingState, iconEl, contextMenu, copyText, toast } from '../dom.js';
 import { icon } from '../icons.js';
-import { fmtCommitDate, fmtFullDate, fmtRelative, commitUrl } from '../format.js';
+import { fmtCommitDate, fmtFullDate, fmtRelative, commitUrl, absPath } from '../format.js';
 import { statusBadge, filePathEl, diffStatsEl, refsEl, avatarEl } from './filelist.js';
 
 function actionButton(iconName, title, onClick) {
@@ -114,7 +114,7 @@ export function renderCommitDetails(ctx, { details, loading, selectedSha }) {
           { label: '文件历史', icon: 'history', onClick: () => ctx.showFileHistory(file.path) },
           { label: '查看 Blame', icon: 'blame', onClick: () => ctx.showBlame({ path: file.path, rev: details.hash }) },
           { separator: true },
-          { label: '复制文件路径', icon: 'copy', onClick: async () => { await copyText(file.path); toast('已复制路径', 'success'); } },
+          { label: '复制文件路径', icon: 'copy', onClick: async () => { await copyText(absPath(ctx.state.repo.path, file.path)); toast('已复制完整路径', 'success'); } },
         ]);
       },
     });

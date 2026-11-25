@@ -56,6 +56,7 @@ import {
   settingsSave,
   stageFiles,
   unstageFiles,
+  writeWorkingFile,
 } from './actions.mjs';
 import { getRecent, readSettings } from './store.mjs';
 
@@ -106,6 +107,7 @@ const methods = {
   'repo.commit': (p) => getCommit(p.repo, p.sha),
   'repo.diff': (p) => getDiff(p.repo, p),
   'repo.file': (p) => getFileContent(p.repo, p),
+  'file.write': writeWorkingFile,
   'repo.conflict': (p) => getConflict(p.repo, p),
   'repo.blame': (p) => getBlame(p.repo, p),
   'repo.fileHistory': (p) => getFileHistory(p.repo, p),

@@ -148,6 +148,66 @@ test('creates branches, merges and reports conflicts', async () => {
   assert.ok(log.commits.every((c) => c.graph && c.graph.lane >= 0));
 });
 
+test('edits a conflicted file and marks it resolved', async () => {
+  const repo = path.join(WORK, 'conflict-edit');
+  fs.mkdirSync(repo, { recursive: true });
+  await rpc('repo.init', { dir: repo });
+  write(repo, 'main.js', '\uFEFFconst a = 1\r\nconst b = 2\r\n');
+  await rpc('commit.create', { repo, message: 'base', paths: ['main.js'] });
+
+  await rpc('branch.create', { repo, name: 'feature/win', checkout: true });
+  write(repo, 'main.js', '\uFEFFconst a = 1\r\nconst b = 3\r\n');
+  await rpc('commit.create', { repo, message: 'feature', paths: ['main.js'] });
+  await rpc('branch.checkout', { repo, name: 'main' });
+  write(repo, 'main.js', '\uFEFFconst a = 9\r\nconst b = 2\r\n');
+  await rpc('commit.create', { repo, message: 'main', paths: ['main.js'] });
+
+  const merge = await rpc('branch.merge', { repo, name: 'feature/win' });
+  assert.equal(merge.conflicted, true);
+
+  const conflict = await rpc('repo.conflict', { repo, path: 'main.js' });
+  assert.ok(conflict.working.hash, 'working hash exposed for optimistic concurrency');
+
+  // 带着残留标记保存：只写文件，不自动标记为已解决。
+  const partial = await rpc('file.write', {
+    repo, path: 'main.js', content: conflict.working.content, expectedHash: conflict.working.hash,
+  });
+  assert.ok(partial.markers.length >= 3, 'markers reported');
+  assert.equal(partial.resolved, false);
+  let snap = await rpc('repo.snapshot', { repo });
+  assert.equal(snap.status.counts.conflicted, 1);
+
+  // 外部改了文件之后，旧 hash 必须被拒绝（避免覆盖别人的修改）。
+  write(repo, 'main.js', '\uFEFFconst a = 9\r\nconst b = 4\r\n');
+  await assert.rejects(
+    () => rpc('file.write', { repo, path: 'main.js', content: 'x\n', expectedHash: partial.hash }),
+    /已在编辑器外被修改/,
+  );
+
+  const fresh = await rpc('repo.conflict', { repo, path: 'main.js' });
+  const merged = '\uFEFFconst a = 9\r\nconst b = 3\r\n';
+  const saved = await rpc('file.write', {
+    repo, path: 'main.js', content: merged, expectedHash: fresh.working.hash,
+  });
+  assert.deepEqual(saved.markers, []);
+  assert.equal(saved.resolved, true);
+
+  snap = await rpc('repo.snapshot', { repo });
+  assert.equal(snap.status.counts.conflicted, 0);
+  assert.ok(snap.status.files.some((f) => f.path === 'main.js' && f.group === 'staged'));
+
+  // BOM 与 CRLF 必须保留，不能因为编辑一次就把整个文件改写掉。
+  const onDisk = fs.readFileSync(path.join(repo, 'main.js'));
+  assert.equal(onDisk[0], 0xef);
+  assert.equal(onDisk.toString('utf8'), merged);
+
+  // 已解决的文件不再是可编辑对象。
+  await assert.rejects(
+    () => rpc('file.write', { repo, path: 'main.js', content: 'x\n' }),
+    /没有未解决的冲突/,
+  );
+});
+
 test('stages renames and deletions safely', async () => {
   const repo = path.join(WORK, 'rename');
   fs.mkdirSync(repo, { recursive: true });

@@ -65,6 +65,10 @@ const ctx = {
   prefillAmendMessage: () => prefillAmendMessage(),
   acceptConflict: (file, side) => acceptConflict(file, side),
   markResolved: (paths) => markResolved(paths),
+  openConflictEditor: () => openConflictEditor(),
+  setConflictDraft: (text) => setConflictDraft(text),
+  saveConflictDraft: () => saveConflictDraft(),
+  cancelConflictEditor: () => cancelConflictEditor(),
   abortOperation: () => abortOperation(),
   continueOperation: () => continueOperation(),
   checkoutBranch: (ref) => checkoutBranch(ref),
@@ -144,6 +148,11 @@ function syncChanges() {
     if (!known.has(key) && file.group !== 'conflicted') state.changes.checked.add(key);
   }
   state.changes.known = keys;
+  const editor = state.changes.editor;
+  if (editor && !files.some((f) => f.group === 'conflicted' && f.path === editor.path)) {
+    // 冲突已经解决（例如刚才保存过），草稿没有继续存在的意义。
+    state.changes.editor = null;
+  }
   if (!state.changes.selectedKey || !keys.has(state.changes.selectedKey)) {
     const preferred = preferredFile(files);
     state.changes.selectedKey = preferred ? fileKey(preferred) : null;
@@ -307,6 +316,11 @@ async function loadChangeDiff({ force = false } = {}) {
 
 async function selectChangeFile(file) {
   const key = fileKey(file);
+  const editor = state.changes.editor;
+  if (editor && editor.path !== file.path && editor.text !== editor.original) {
+    toast('冲突编辑器里有未保存的内容，请先保存或取消编辑', 'warn');
+    return;
+  }
   if (key === state.changes.selectedKey && state.changes.diff) {
     render();
     return;
@@ -829,6 +843,81 @@ async function markResolved(paths) {
   }), { success: '已标记为已解决' });
 }
 
+/* ---------------------------------------------------------- conflict editor */
+
+function openConflictEditor() {
+  const conflict = state.changes.conflict;
+  const file = selectedChangeFile();
+  if (!file || file.group !== 'conflicted' || !conflict) return;
+  if (conflict.working?.binary) {
+    toast('二进制文件无法在线编辑，请选择「我的版本」或「对方版本」', 'warn');
+    return;
+  }
+  const text = conflict.working?.content ?? '';
+  state.changes.editor = {
+    path: file.path,
+    original: text,
+    text,
+    hash: conflict.working?.hash || null,
+    saving: false,
+    error: null,
+  };
+  state.changes.conflictMode = 'working';
+  render();
+}
+
+function setConflictDraft(text) {
+  const editor = state.changes.editor;
+  if (!editor || typeof text !== 'string') return;
+  editor.text = text;
+}
+
+function cancelConflictEditor() {
+  const editor = state.changes.editor;
+  if (!editor) return;
+  if (editor.text !== editor.original && editor.text !== undefined) {
+    // 取消编辑就是丢弃草稿，给个明确的提示，避免误以为已经写回文件。
+    toast('已放弃未保存的编辑内容', 'warn');
+  }
+  state.changes.editor = null;
+  render();
+}
+
+async function saveConflictDraft() {
+  const editor = state.changes.editor;
+  if (!editor || editor.saving) return;
+  editor.saving = true;
+  editor.error = null;
+  render();
+  try {
+    const data = await rpc('file.write', {
+      repo: state.repo.path,
+      path: editor.path,
+      content: editor.text,
+      expectedHash: editor.hash,
+    });
+    editor.saving = false;
+    if (data.markers?.length) {
+      editor.hash = data.hash;
+      editor.original = editor.text;
+      toast(`已保存，但仍有 ${data.markers.length} 处冲突标记未处理`, 'warn', { duration: 6000 });
+      await refreshAll({ log: false });
+      await loadChangeDiff({ force: true });
+      render();
+      return;
+    }
+    state.changes.editor = null;
+    state.changes.conflict = null;
+    toast(data.resolved ? '已保存并标记为已解决' : '已保存', 'success');
+    await refreshAll({ log: false });
+  } catch (err) {
+    editor.saving = false;
+    editor.error = err.message;
+    showError(err);
+    render();
+  }
+}
+
 async function abortOperation() {
   const ok = await confirmDanger({
     title: '中止当前操作',
@@ -1123,6 +1212,7 @@ async function openRepoPath(path, { silent = false } = {}) {
       diffError: null,
       conflict: null,
       conflictMode: 'working',
+      editor: null,
       message: '',
       amend: false,
       includeUntracked: false,
@@ -1173,7 +1263,7 @@ async function cloneRepo(url, dir) {
     resetLog();
     state.changes = {
       selectedKey: null, diff: null, diffLoading: false, diffError: null,
-      conflict: null, conflictMode: 'working',
+      conflict: null, conflictMode: 'working', editor: null,
       message: '', amend: false, checked: new Set(), known: new Set(), collapsed: new Set(),
       scrollTop: 0, diffMode: null,
     };
@@ -1208,7 +1298,7 @@ async function initRepo(dir, createGitignore = true) {
     resetLog();
     state.changes = {
       selectedKey: null, diff: null, diffLoading: false, diffError: null,
-      conflict: null, conflictMode: 'working',
+      conflict: null, conflictMode: 'working', editor: null,
       message: '', amend: false, checked: new Set(), known: new Set(), collapsed: new Set(),
       scrollTop: 0, diffMode: null,
     };

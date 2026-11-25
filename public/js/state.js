@@ -35,6 +35,8 @@ export const state = {
     diffError: null,
     conflict: null,
     conflictMode: 'working',
+    // 冲突编辑器草稿：{ path, original, text, hash, saving, error }
+    editor: null,
     message: '',
     amend: false,
     includeUntracked: false,
