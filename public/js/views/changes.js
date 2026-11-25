@@ -60,9 +60,13 @@ function renderFileRow(ctx, file, state) {
     class: `file-row change-row ${isSelected ? 'selected' : ''} ${file.group === 'conflicted' ? 'conflicted' : ''}`,
     tabindex: '0',
     onclick: () => ctx.selectChangeFile(file),
+    ondblclick: file.group === 'conflicted' ? () => ctx.openMergeTool(file) : null,
     oncontextmenu: (event) => changeFileMenu(ctx, file, event),
     onkeydown: (event) => {
-      if (event.key === 'Enter') ctx.selectChangeFile(file);
+      if (event.key === 'Enter') {
+        if (file.group === 'conflicted') ctx.openMergeTool(file);
+        else ctx.selectChangeFile(file);
+      }
     },
   });
   const checkbox = h('input', {
@@ -121,6 +125,8 @@ function renderFileRow(ctx, file, state) {
 
 function acceptMenu(ctx, file, event) {
   contextMenu(event, [
+    { label: '三栏合并解决…', icon: 'merge', onClick: () => ctx.openMergeTool(file) },
+    { separator: true },
     { label: '使用我的版本（ours）', icon: 'check', onClick: () => ctx.acceptConflict(file, 'ours') },
     { label: '使用对方版本（theirs）', icon: 'download', onClick: () => ctx.acceptConflict(file, 'theirs') },
     { separator: true },
@@ -139,6 +145,7 @@ function changeFileMenu(ctx, file, event) {
   if (file.group === 'conflicted') {
     items.push(
       { separator: true },
+      { label: '三栏合并解决…', icon: 'merge', onClick: () => ctx.openMergeTool(file) },
       { label: '使用我的版本（ours）', icon: 'check', onClick: () => ctx.acceptConflict(file, 'ours') },
       { label: '使用对方版本（theirs）', icon: 'download', onClick: () => ctx.acceptConflict(file, 'theirs') },
       { label: '标记为已解决', icon: 'check', onClick: () => ctx.markResolved([file.path]) },
@@ -444,9 +451,14 @@ export function renderChangesView(ctx) {
         h('span', { html: icon('alert', 14) }),
         h('span', {}, '此文件存在合并冲突'),
         h('div', { class: 'spacer' }),
+        h('button', {
+          class: 'btn small primary',
+          html: `${icon('merge', 13)}<span>三栏合并解决…</span>`,
+          onclick: () => ctx.openMergeTool(file),
+        }),
         h('button', { class: 'btn small', onclick: () => ctx.acceptConflict(file, 'ours') }, '使用我的版本'),
         h('button', { class: 'btn small', onclick: () => ctx.acceptConflict(file, 'theirs') }, '使用对方版本'),
-        h('button', { class: 'btn small primary', onclick: () => ctx.markResolved([file.path]) }, '标记为已解决')));
+        h('button', { class: 'btn small', onclick: () => ctx.markResolved([file.path]) }, '标记为已解决')));
     }
     if (state.changes.diffLoading) {
       diffPane.append(loadingState('正在读取差异…'));
@@ -459,6 +471,7 @@ export function renderChangesView(ctx) {
           state.changes.conflictMode = mode;
           ctx.render();
         },
+        onOpenMerge: () => ctx.openMergeTool(file),
         onBeginEdit: () => ctx.openConflictEditor(),
         onDraft: (text) => ctx.setConflictDraft(text),
         onSave: () => ctx.saveConflictDraft(),

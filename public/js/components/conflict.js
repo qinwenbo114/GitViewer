@@ -177,7 +177,7 @@ function renderEditor(editor, handlers) {
 }
 
 export function renderConflictView(conflict, mode = 'working', opts = {}) {
-  const { onModeChange, editor = null, onBeginEdit, onDraft, onSave, onCancel } = opts;
+  const { onModeChange, editor = null, onBeginEdit, onOpenMerge, onDraft, onSave, onCancel } = opts;
   const root = h('div', { class: 'conflict-view' });
   const tabs = [
     { key: 'working', label: '工作区（含标记）', icon: 'warning' },
@@ -187,6 +187,7 @@ export function renderConflictView(conflict, mode = 'working', opts = {}) {
   ];
   const editing = !!(editor && mode === 'working');
   const canEdit = mode === 'working' && !conflict.working?.binary;
+  const canMerge = !conflict.working?.binary && !conflict.ours?.binary && !conflict.theirs?.binary && !conflict.base?.binary;
   const toolbar = h('div', { class: 'conflict-toolbar' },
     h('div', { class: 'conflict-tabs' },
       ...tabs.map((tab) => h('button', {
@@ -197,11 +198,20 @@ export function renderConflictView(conflict, mode = 'working', opts = {}) {
     h('div', { class: 'spacer' }),
     editing
       ? h('span', { class: 'muted conflict-hint' }, '保存后若没有残留标记，会自动 git add 并标记为已解决')
-      : h('span', { class: 'muted conflict-hint' }, '解决冲突后点击「标记为已解决」'),
+      : h('span', { class: 'muted conflict-hint' }, '推荐使用三栏合并视图逐块解决冲突'),
+    !editing && canMerge
+      ? h('button', {
+        class: 'btn small primary',
+        title: '打开三栏可视化合并工具（类似 IDEA / Android Studio）',
+        html: `${icon('merge', 13)}<span>三栏合并…</span>`,
+        onclick: () => onOpenMerge?.(),
+      })
+      : null,
     !editing && canEdit
       ? h('button', {
         class: 'btn small',
-        html: `${icon('edit', 13)}<span>编辑</span>`,
+        title: '在纯文本模式中手工编辑工作区文件',
+        html: `${icon('edit', 13)}<span>纯文本编辑</span>`,
         onclick: () => onBeginEdit?.(),
       })
       : null,
@@ -226,10 +236,23 @@ export function renderConflictView(conflict, mode = 'working', opts = {}) {
     root.append(h('div', { class: 'conflict-empty' }, '二进制文件冲突，请选择保留「我的版本」或「对方版本」。'));
     return root;
   }
-  if (mode === 'working' && !/^(<<<<<<<|=======|>>>>>>>)/m.test(part.content || '')) {
-    root.append(h('div', { class: 'conflict-note' },
-      h('span', { html: icon('info', 13) }),
-      h('span', {}, '工作区文件已不再包含冲突标记，确认内容后标记为已解决。')));
+  if (mode === 'working') {
+    const blocks = parseBlocks(part.content || '');
+    if (!/^(<<<<<<<|=======|>>>>>>>)/m.test(part.content || '')) {
+      root.append(h('div', { class: 'conflict-note' },
+        h('span', { html: icon('info', 13) }),
+        h('span', {}, '工作区文件已不再包含冲突标记，确认内容后标记为已解决。')));
+    } else if (canMerge) {
+      root.append(h('div', { class: 'conflict-note merge-callout' },
+        h('span', { html: icon('merge', 13) }),
+        h('span', {}, `检测到 ${blocks.length || 1} 处冲突块，可在三栏视图中对照「本地 / 结果 / 传入」逐块合并或直接编辑。`),
+        h('span', { class: 'spacer' }),
+        h('button', {
+          class: 'btn tiny primary',
+          html: `${icon('merge', 12)}<span>打开三栏合并</span>`,
+          onclick: () => onOpenMerge?.(),
+        })));
+    }
   }
   root.append(renderCode(part.content, { markers: mode === 'working' }));
   return root;

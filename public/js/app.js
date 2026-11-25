@@ -13,6 +13,7 @@ import { renderStashesView } from './views/stashes.js';
 import { renderTagsView } from './views/tags.js';
 import { renderConsoleView } from './views/console.js';
 import { openDiff, showBlameOverlay, showOutputDialog } from './components/overlays.js';
+import { openMergeOverlay } from './components/merge3.js';
 import {
   openRepoDialog,
   cloneDialog,
@@ -65,6 +66,8 @@ const ctx = {
   prefillAmendMessage: () => prefillAmendMessage(),
   acceptConflict: (file, side) => acceptConflict(file, side),
   markResolved: (paths) => markResolved(paths),
+  openMergeTool: (file) => openMergeTool(file),
+  saveConflictContent: (path, content, expectedHash) => saveConflictContent(path, content, expectedHash),
   openConflictEditor: () => openConflictEditor(),
   setConflictDraft: (text) => setConflictDraft(text),
   saveConflictDraft: () => saveConflictDraft(),
@@ -844,6 +847,54 @@ async function markResolved(paths) {
 }
 
 /* ---------------------------------------------------------- conflict editor */
+
+async function openMergeTool(file) {
+  const target = file || selectedChangeFile();
+  if (!target || target.group !== 'conflicted' || !state.repo) return;
+  let conflict = state.changes.conflict && state.changes.conflict.path === target.path
+    ? state.changes.conflict
+    : null;
+  if (!conflict) {
+    busy.begin('正在读取冲突内容…');
+    try {
+      conflict = await rpc('repo.conflict', {
+        repo: state.repo.path,
+        path: target.path,
+      });
+    } catch (err) {
+      showError(err);
+      return;
+    } finally {
+      busy.end();
+    }
+  }
+  openMergeOverlay(ctx, target, conflict);
+}
+
+async function saveConflictContent(path, content, expectedHash) {
+  if (!state.repo) return null;
+  try {
+    const data = await rpc('file.write', {
+      repo: state.repo.path,
+      path,
+      content,
+      expectedHash,
+    });
+    if (data.markers?.length) {
+      toast(`已保存进度，仍有 ${data.markers.length} 处冲突标记未处理`, 'warn', { duration: 5500 });
+      await refreshAll({ log: false });
+      return data;
+    }
+    state.changes.editor = null;
+    state.changes.conflict = null;
+    toast(data.resolved ? '已应用合并并标记为已解决' : '已保存', 'success');
+    await refreshAll({ log: false });
+    return data;
+  } catch (err) {
+    showError(err);
+    throw err;
+  }
+}
 
 function openConflictEditor() {
   const conflict = state.changes.conflict;

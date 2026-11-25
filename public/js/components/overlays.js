@@ -19,7 +19,7 @@ export function closeOverlay() {
 }
 
 function onKey(event) {
-  if (event.key === 'Escape') {
+  if (event.key === 'Escape' && activeOverlay?.closeOnEsc !== false) {
     event.stopPropagation();
     closeOverlay();
   }
@@ -34,7 +34,7 @@ function ensureOverlayRoot() {
   return root;
 }
 
-export function showOverlay({ title, subtitle = '', iconName = 'eye', actions = [], body, onClose }) {
+export function showOverlay({ title, subtitle = '', iconName = 'eye', actions = [], body, onClose, closeOnEsc = true }) {
   closeOverlay();
   const root = ensureOverlayRoot();
   const bodyWrap = h('div', { class: 'overlay-body' });
@@ -56,7 +56,7 @@ export function showOverlay({ title, subtitle = '', iconName = 'eye', actions = 
   root.append(el);
   document.body.classList.add('overlay-open');
   document.addEventListener('keydown', onKey, true);
-  activeOverlay = { el, onClose };
+  activeOverlay = { el, onClose, closeOnEsc };
   return {
     el,
     body: bodyWrap,
