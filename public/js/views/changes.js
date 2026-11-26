@@ -17,7 +17,9 @@ const GROUPS = [
 
 function leftWidth() {
   const stored = Number(localStorage.getItem('gitviewer.changesWidth'));
-  return Number.isFinite(stored) && stored >= 360 ? stored : DEFAULT_LEFT_WIDTH;
+  const preferred = Number.isFinite(stored) && stored >= 300 ? stored : DEFAULT_LEFT_WIDTH;
+  const maxAllowed = Math.max(300, window.innerWidth - 500);
+  return Math.min(preferred, maxAllowed);
 }
 
 export function fileKey(file) {
@@ -321,7 +323,7 @@ export function renderChangesView(ctx) {
   root.append(toolbar);
 
   const main = h('div', { class: 'changes-main' });
-  main.style.gridTemplateColumns = `minmax(380px, ${leftWidth()}px) 5px minmax(0, 1fr)`;
+  main.style.gridTemplateColumns = `minmax(300px, ${leftWidth()}px) 5px minmax(0, 1fr)`;
 
   const left = h('div', { class: 'changes-left' });
   left.append(commitBox(ctx, state));
@@ -406,8 +408,8 @@ export function renderChangesView(ctx) {
     const startX = event.clientX;
     const startWidth = left.getBoundingClientRect().width;
     const onMove = (ev) => {
-      const next = Math.max(360, Math.min(window.innerWidth - 480, startWidth + (ev.clientX - startX)));
-      main.style.gridTemplateColumns = `minmax(380px, ${next}px) 5px minmax(0, 1fr)`;
+      const next = Math.max(300, Math.min(window.innerWidth - 420, startWidth + (ev.clientX - startX)));
+      main.style.gridTemplateColumns = `minmax(300px, ${next}px) 5px minmax(0, 1fr)`;
     };
     const onUp = () => {
       splitter.removeEventListener('pointermove', onMove);
@@ -448,17 +450,18 @@ export function renderChangesView(ctx) {
     diffPane.append(header);
     if (file.group === 'conflicted') {
       diffPane.append(h('div', { class: 'conflict-bar' },
-        h('span', { html: icon('alert', 14) }),
-        h('span', {}, '此文件存在合并冲突'),
-        h('div', { class: 'spacer' }),
-        h('button', {
-          class: 'btn small primary',
-          html: `${icon('merge', 13)}<span>三栏合并解决…</span>`,
-          onclick: () => ctx.openMergeTool(file),
-        }),
-        h('button', { class: 'btn small', onclick: () => ctx.acceptConflict(file, 'ours') }, '使用我的版本'),
-        h('button', { class: 'btn small', onclick: () => ctx.acceptConflict(file, 'theirs') }, '使用对方版本'),
-        h('button', { class: 'btn small', onclick: () => ctx.markResolved([file.path]) }, '标记为已解决')));
+        h('span', { class: 'conflict-bar-label' },
+          h('span', { html: icon('alert', 14) }),
+          h('span', {}, '此文件存在合并冲突')),
+        h('div', { class: 'conflict-bar-actions' },
+          h('button', {
+            class: 'btn small primary',
+            html: `${icon('merge', 13)}<span>三栏合并解决…</span>`,
+            onclick: () => ctx.openMergeTool(file),
+          }),
+          h('button', { class: 'btn small', onclick: () => ctx.acceptConflict(file, 'ours') }, '使用我的版本'),
+          h('button', { class: 'btn small', onclick: () => ctx.acceptConflict(file, 'theirs') }, '使用对方版本'),
+          h('button', { class: 'btn small', onclick: () => ctx.markResolved([file.path]) }, '标记为已解决'))));
     }
     if (state.changes.diffLoading) {
       diffPane.append(loadingState('正在读取差异…'));
@@ -471,7 +474,6 @@ export function renderChangesView(ctx) {
           state.changes.conflictMode = mode;
           ctx.render();
         },
-        onOpenMerge: () => ctx.openMergeTool(file),
         onBeginEdit: () => ctx.openConflictEditor(),
         onDraft: (text) => ctx.setConflictDraft(text),
         onSave: () => ctx.saveConflictDraft(),
