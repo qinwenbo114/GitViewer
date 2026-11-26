@@ -1,6 +1,6 @@
 # GitViewer
 
-> 一个类似 Android Studio Git 工具窗口的独立可视化 Git 客户端。
+> 一个类似 Android Studio Git 工具窗口的独立可视化 Git 客户端。合并测试2
 > 不依赖 Android Studio，也不需要安装插件；双击即可打开自己的应用窗口。
 
 ![GitViewer 提交图](docs/screenshots/log.png)
